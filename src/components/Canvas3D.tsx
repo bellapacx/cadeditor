@@ -290,8 +290,20 @@ const Canvas3D: React.FC = () => {
         : type === "cylinder"
         ? createCylinder()
         : createBox();
+
     shape.position.copy(ghost.position);
-    shape.scale.copy(ghost.scale);
+
+    // Ensure minimum scale for spheres
+    if (type === "sphere") {
+      shape.scale.set(
+        Math.max(ghost.scale.x, 0.1),
+        Math.max(ghost.scale.y, 0.1),
+        Math.max(ghost.scale.z, 0.1)
+      );
+    } else {
+      shape.scale.copy(ghost.scale);
+    }
+
     return shape;
   };
 

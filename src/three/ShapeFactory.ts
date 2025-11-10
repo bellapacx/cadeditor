@@ -21,7 +21,8 @@ export const createBox = (dims: THREE.Vector3 = new THREE.Vector3(1, 1, 1)) => {
 export const createSphere = (
   dims: THREE.Vector3 = new THREE.Vector3(1, 1, 1)
 ) => {
-  const geom = new THREE.SphereGeometry(dims.x / 2, 32, 16);
+  const radius = Math.max(dims.x / 2, 0.1); // avoid 0 radius
+  const geom = new THREE.SphereGeometry(radius, 32, 16);
   const mat = new THREE.MeshStandardMaterial({ color: 0xcccccc });
   const mesh = new THREE.Mesh(geom, mat);
 
@@ -30,7 +31,7 @@ export const createSphere = (
 
   group.userData.mesh = mesh;
   group.userData.dimensions = dims.clone();
-  group.userData.shapeType = "sphere"; // ✅ add this
+  group.userData.shapeType = "sphere";
 
   return group;
 };
