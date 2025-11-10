@@ -21,10 +21,12 @@ export const createBox = (dims: THREE.Vector3 = new THREE.Vector3(1, 1, 1)) => {
 export const createSphere = (
   dims: THREE.Vector3 = new THREE.Vector3(1, 1, 1)
 ) => {
-  const radius = Math.max(dims.x / 2, 0.1); // avoid 0 radius
-  const geom = new THREE.SphereGeometry(radius, 32, 16);
+  const geom = new THREE.SphereGeometry(0.5, 32, 16); // unit sphere
   const mat = new THREE.MeshStandardMaterial({ color: 0xcccccc });
   const mesh = new THREE.Mesh(geom, mat);
+
+  // Scale the mesh to match dims
+  mesh.scale.set(dims.x, dims.y, dims.z);
 
   const group = new THREE.Group();
   group.add(mesh);

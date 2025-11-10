@@ -293,14 +293,13 @@ const Canvas3D: React.FC = () => {
 
     shape.position.copy(ghost.position);
 
-    // Ensure minimum scale for spheres
-    if (type === "sphere") {
-      shape.scale.set(
-        Math.max(ghost.scale.x, 0.1),
-        Math.max(ghost.scale.y, 0.1),
-        Math.max(ghost.scale.z, 0.1)
-      );
+    const mesh = shape.userData.mesh as THREE.Mesh;
+
+    if (type === "sphere" || type === "cylinder") {
+      // Apply non-uniform scale to mesh
+      mesh.scale.copy(ghost.scale);
     } else {
+      // Boxes scale the group
       shape.scale.copy(ghost.scale);
     }
 
