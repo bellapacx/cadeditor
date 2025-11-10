@@ -1,5 +1,4 @@
-// Canvas3D.tsx
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import * as THREE from "three";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
@@ -42,6 +41,7 @@ const Canvas3D: React.FC = () => {
   // --- Initialize Scene ---
   useEffect(() => {
     if (!mountRef.current || rendererRef.current) return;
+    const mount = mountRef.current; // ✅ local copy for cleanup
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0xf0f0f0);
@@ -49,7 +49,7 @@ const Canvas3D: React.FC = () => {
 
     const camera = new THREE.PerspectiveCamera(
       75,
-      mountRef.current.clientWidth / mountRef.current.clientHeight,
+      mount.clientWidth / mount.clientHeight,
       0.1,
       1000
     );
@@ -58,14 +58,10 @@ const Canvas3D: React.FC = () => {
     cameraRef.current = camera;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(
-      mountRef.current.clientWidth,
-      mountRef.current.clientHeight
-    );
-    mountRef.current.appendChild(renderer.domElement);
+    renderer.setSize(mount.clientWidth, mount.clientHeight);
+    mount.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
-    // Lights & Grid
     scene.add(new THREE.GridHelper(10, 10));
     scene.add(new THREE.AmbientLight(0xffffff, 0.8));
     const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
@@ -84,7 +80,7 @@ const Canvas3D: React.FC = () => {
     // OrbitControls
     const orbit = new OrbitControls(camera, renderer.domElement);
     orbit.mouseButtons = {
-      LEFT: null, // left-click pans camera
+      LEFT: null,
       MIDDLE: THREE.MOUSE.DOLLY,
       RIGHT: THREE.MOUSE.ROTATE,
     };
@@ -99,7 +95,6 @@ const Canvas3D: React.FC = () => {
     scene.add(transformControls.getHelper());
     transformControls.addEventListener("dragging-changed", (event) => {
       orbit.enabled = !event.value;
-      // Update properties panel while dragging
       if (event.value && selectionManagerRef.current?.getSelected()) {
         setSelectionProperties({
           ...selectionManagerRef.current.getSelected(),
@@ -116,51 +111,17 @@ const Canvas3D: React.FC = () => {
 
     // Resize
     const handleResize = () => {
-      if (!mountRef.current) return;
-      camera.aspect =
-        mountRef.current.clientWidth / mountRef.current.clientHeight;
+      camera.aspect = mount.clientWidth / mount.clientHeight;
       camera.updateProjectionMatrix();
-      renderer.setSize(
-        mountRef.current.clientWidth,
-        mountRef.current.clientHeight
-      );
+      renderer.setSize(mount.clientWidth, mount.clientHeight);
     };
     window.addEventListener("resize", handleResize);
 
     return () => {
       window.removeEventListener("resize", handleResize);
-      mountRef.current?.removeChild(renderer.domElement);
+      mount.removeChild(renderer.domElement); // ✅ safe cleanup
     };
   }, [snapToGrid]);
-
-  // === Export / Import ===
-  const handleExport = () => {
-    if (!sceneRef.current) return;
-    const json = SceneExporter.export(sceneRef.current);
-    const blob = new Blob([json], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "scene.json";
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const handleImport = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file || !sceneRef.current) return;
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const json = e.target?.result as string;
-      SceneImporter.import(
-        json,
-        sceneRef.current!,
-        selectionManagerRef.current!
-      );
-    };
-    reader.readAsText(file);
-  };
 
   // --- Keyboard controls ---
   useEffect(() => {
@@ -190,80 +151,87 @@ const Canvas3D: React.FC = () => {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  // --- Pointer events ---
-  const handlePointerDown = (event: PointerEvent) => {
-    if (event.button !== 0) return;
-    if (!sceneRef.current || !rendererRef.current) return;
+  // --- Pointer handlers (stabilized) ---
+  const handlePointerDown = useCallback(
+    (event: PointerEvent) => {
+      if (event.button !== 0 || !sceneRef.current || !rendererRef.current)
+        return;
 
-    if (toolMode === "select") {
-      const forcedType =
-        selectionModeRef.current === "face"
-          ? "face"
-          : selectionModeRef.current === "edge"
-          ? "edge"
-          : undefined;
+      if (toolMode === "select") {
+        const forcedType =
+          selectionModeRef.current === "face"
+            ? "face"
+            : selectionModeRef.current === "edge"
+            ? "edge"
+            : undefined;
 
-      const selected = selectionManagerRef.current?.select(
-        event,
-        rendererRef.current.domElement,
-        forcedType
-      );
+        const selected = selectionManagerRef.current?.select(
+          event,
+          rendererRef.current.domElement,
+          forcedType
+        );
 
-      setSelectionProperties(selected || null);
+        setSelectionProperties(selected || null);
 
-      if (selected) transformControlsRef.current?.attach(selected.object);
-      else transformControlsRef.current?.detach();
-      return;
-    }
+        if (selected) transformControlsRef.current?.attach(selected.object);
+        else transformControlsRef.current?.detach();
+        return;
+      }
 
-    if (toolMode === "create") {
-      if (ghostShape.current) sceneRef.current.remove(ghostShape.current);
-      const ghost = createGhostShape(selectedShapeType);
-      const clickPos = getPointerPositionInWorld(event);
-      ghost.position.copy(clickPos);
-      ghost.scale.set(0.01, 0.01, 0.01);
-      sceneRef.current.add(ghost);
-      ghostShape.current = ghost;
-      dragStart.current = clickPos.clone();
-    }
+      if (toolMode === "create") {
+        if (ghostShape.current) sceneRef.current.remove(ghostShape.current);
+        const ghost = createGhostShape(selectedShapeType);
+        const clickPos = getPointerPositionInWorld(event);
+        ghost.position.copy(clickPos);
+        ghost.scale.set(0.01, 0.01, 0.01);
+        sceneRef.current.add(ghost);
+        ghostShape.current = ghost;
+        dragStart.current = clickPos.clone();
+      }
 
-    if (toolMode === "sketch") {
-      sketchManagerRef.current?.setTool(sketchTool);
-      sketchManagerRef.current?.onPointerDown(
-        event,
-        rendererRef.current.domElement
-      );
-    }
-  };
+      if (toolMode === "sketch") {
+        sketchManagerRef.current?.setTool(sketchTool);
+        sketchManagerRef.current?.onPointerDown(
+          event,
+          rendererRef.current.domElement
+        );
+      }
+    },
+    [toolMode, selectedShapeType, sketchTool]
+  );
 
-  const handlePointerMove = (event: PointerEvent) => {
-    if (!rendererRef.current || !sceneRef.current) return;
+  const handlePointerMove = useCallback(
+    (event: PointerEvent) => {
+      if (!rendererRef.current || !sceneRef.current) return;
 
-    if (toolMode === "create" && ghostShape.current && dragStart.current) {
-      const currentPos = getPointerPositionInWorld(event);
-      const delta = currentPos.clone().sub(dragStart.current);
-      ghostShape.current.scale.set(
-        Math.max(0.1, Math.abs(delta.x)),
-        1,
-        Math.max(0.1, Math.abs(delta.z))
-      );
-      ghostShape.current.position.set(
-        dragStart.current.x + delta.x / 2,
-        0.5,
-        dragStart.current.z + delta.z / 2
-      );
-    }
+      if (toolMode === "create" && ghostShape.current && dragStart.current) {
+        const currentPos = getPointerPositionInWorld(event);
+        const delta = currentPos.clone().sub(dragStart.current);
+        ghostShape.current.scale.set(
+          Math.max(0.1, Math.abs(delta.x)),
+          1,
+          Math.max(0.1, Math.abs(delta.z))
+        );
+        ghostShape.current.position.set(
+          dragStart.current.x + delta.x / 2,
+          0.5,
+          dragStart.current.z + delta.z / 2
+        );
+      }
 
-    if (toolMode === "sketch") {
-      sketchManagerRef.current?.onPointerMove(
-        event,
-        rendererRef.current.domElement
-      );
-    }
-  };
+      if (toolMode === "sketch") {
+        sketchManagerRef.current?.onPointerMove(
+          event,
+          rendererRef.current.domElement
+        );
+      }
+    },
+    [toolMode]
+  );
 
-  const handlePointerUp = () => {
+  const handlePointerUp = useCallback(() => {
     if (!sceneRef.current) return;
+
     if (toolMode === "create" && ghostShape.current) {
       const finalShape = createShapeFromGhost(
         ghostShape.current,
@@ -275,10 +243,11 @@ const Canvas3D: React.FC = () => {
       ghostShape.current = null;
       dragStart.current = null;
     }
-    if (toolMode === "sketch") sketchManagerRef.current?.onPointerUp();
-  };
 
-  // --- Attach events ---
+    if (toolMode === "sketch") sketchManagerRef.current?.onPointerUp();
+  }, [toolMode, selectedShapeType]);
+
+  // --- Attach pointer events ---
   useEffect(() => {
     if (!rendererRef.current) return;
     const el = rendererRef.current.domElement;
@@ -295,7 +264,7 @@ const Canvas3D: React.FC = () => {
       el.removeEventListener("pointermove", handlePointerMove);
       el.removeEventListener("pointerup", handlePointerUp);
     };
-  }, [toolMode, selectedShapeType, sketchTool]);
+  }, [handlePointerDown, handlePointerMove, handlePointerUp]);
 
   // --- Helpers ---
   const createGhostShape = (type: ShapeType) => {
@@ -341,16 +310,40 @@ const Canvas3D: React.FC = () => {
     return point;
   };
 
+  // --- Export / Import ---
+  const handleExport = () => {
+    if (!sceneRef.current) return;
+    const json = SceneExporter.export(sceneRef.current);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "scene.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImport = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !sceneRef.current) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const json = e.target?.result as string;
+      SceneImporter.import(
+        json,
+        sceneRef.current!,
+        selectionManagerRef.current!
+      );
+    };
+    reader.readAsText(file);
+  };
+
   return (
     <div className="w-full h-full relative">
       <div ref={mountRef} className="w-full h-full" />
-
-      {/* Right-side properties panel */}
       <div className="absolute top-4 right-4">
         <PropertiesPanel selection={selectionProperties} />
       </div>
-
-      {/* Toolbar */}
       <Toolbar
         activeTool={
           toolMode === "select"
@@ -373,8 +366,6 @@ const Canvas3D: React.FC = () => {
           setToolMode("sketch");
         }}
       />
-
-      {/* Export / Import Controls */}
       <div className="absolute bottom-4 right-4 bg-white p-3 rounded-lg shadow-lg flex items-center gap-3">
         <button
           onClick={handleExport}
