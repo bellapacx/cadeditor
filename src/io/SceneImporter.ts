@@ -25,18 +25,6 @@ export class SceneImporter {
         return;
       }
 
-      // --- Remove existing shapes ---
-      const toRemove: THREE.Object3D[] = [];
-      scene.traverse((child) => {
-        if (child instanceof THREE.Group && child.userData?.shapeType) {
-          toRemove.push(child);
-        }
-      });
-      toRemove.forEach((obj) => {
-        console.log("Removing existing shape:", obj.userData?.shapeType);
-        scene.remove(obj);
-      });
-
       // --- Recreate shapes ---
       for (const objData of data.objects as ImportedObject[]) {
         const dims = objData.dimensions

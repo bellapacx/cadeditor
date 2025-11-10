@@ -5,7 +5,7 @@ import "./index.css";
 
 const App: React.FC = () => {
   return (
-    <div className="w-screen h-screen bg-gray-500">
+    <div className="w-screen h-screen">
       <Canvas3D />
     </div>
   );
