@@ -1,46 +1,62 @@
-# Getting Started with Create React App
+# React 3D Canvas Editor
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+A React-based 3D canvas editor built with **Three.js** that allows you to:
 
-## Available Scripts
+- Create, select, and manipulate 3D shapes (boxes, spheres, cylinders)
+- Sketch shapes directly on the canvas
+- Transform shapes with **Translate / Rotate / Scale**
+- Snap objects to a grid
+- Export and import scenes in JSON format
+- View and edit shape properties dynamically
 
-In the project directory, you can run:
+---
 
-### `npm start`
+## Features
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in the browser.
+### 1. **Shape Creation**
 
-The page will reload if you make edits.\
-You will also see any lint errors in the console.
+- Supports **Box**, **Sphere**, and **Cylinder**
+- Interactive ghost shapes for preview before placement
+- Dynamic scaling using pointer drag
 
-### `npm test`
+### 2. **Selection & Transformation**
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+- Use **TransformControls** for:
+  - Translate (`W`)
+  - Rotate (`E`)
+  - Scale (`R`)
+- Selection modes:
+  - Shape
+  - Face (`F`)
+  - Edge (`G`)
 
-### `npm run build`
+### 3. **Sketching**
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+- Integrated sketching tool
+- Supports rectangle and circle sketches
+- Snaps to grid for precise alignment
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+### 4. **Scene Management**
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+- Export the current scene as JSON
+- Import JSON to restore the scene with full transform and selection support
 
-### `npm run eject`
+### 5. **Properties Panel**
 
-**Note: this is a one-way operation. Once you `eject`, you can’t go back!**
+- Displays selected shape properties dynamically
+- Updates live when transforming shapes
 
-If you aren’t satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+### 6. **Camera & Controls**
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you’re on your own.
+- OrbitControls for camera rotation, pan, and zoom
+- Dragging shapes temporarily disables orbit controls
 
-You don’t have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn’t feel obligated to use this feature. However we understand that this tool wouldn’t be useful if you couldn’t customize it when you are ready for it.
+---
 
-## Learn More
+## Installation
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+Ensure you have a React project set up with **TypeScript** and **Three.js** installed:
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+```bash
+npm install three @types/three
+```
