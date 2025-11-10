@@ -135,7 +135,7 @@ const Canvas3D: React.FC = () => {
       }
     };
   }, []);
-  /* eslint-enable react-hooks/exhaustive-deps */
+  /* eslint-disable react-hooks/exhaustive-deps */
   // --- Keyboard controls ---
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -164,26 +164,7 @@ const Canvas3D: React.FC = () => {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  // --- Pointer helpers ---
-  const getPointerPositionInWorld = (event: PointerEvent) => {
-    if (!rendererRef.current || !cameraRef.current) return new THREE.Vector3();
-
-    const rect = rendererRef.current.domElement.getBoundingClientRect();
-    const pointer = new THREE.Vector2(
-      ((event.clientX - rect.left) / rect.width) * 2 - 1,
-      -((event.clientY - rect.top) / rect.height) * 2 + 1
-    );
-
-    const raycaster = new THREE.Raycaster();
-    raycaster.setFromCamera(pointer, cameraRef.current);
-
-    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // XZ plane base
-    const point = new THREE.Vector3();
-    raycaster.ray.intersectPlane(plane, point);
-    return point;
-  };
-
-  // --- Pointer handlers ---
+  // --- Pointer handlers (stabilized) ---
   const handlePointerDown = useCallback(
     (event: PointerEvent) => {
       if (event.button !== 0 || !sceneRef.current || !rendererRef.current)
@@ -205,14 +186,8 @@ const Canvas3D: React.FC = () => {
 
         setSelectionProperties(selected || null);
 
-        if (selected) {
-          // Attach TransformControls to the parent group, not just the mesh
-          const group = selected.object.parent || selected.object;
-          transformControlsRef.current?.attach(group);
-        } else {
-          transformControlsRef.current?.detach();
-        }
-
+        if (selected) transformControlsRef.current?.attach(selected.object);
+        else transformControlsRef.current?.detach();
         return;
       }
 
@@ -240,47 +215,47 @@ const Canvas3D: React.FC = () => {
 
   const handlePointerMove = useCallback(
     (event: PointerEvent) => {
-      if (!ghostShape.current || !dragStart.current || !sceneRef.current)
-        return;
+      if (!rendererRef.current || !sceneRef.current) return;
 
-      if (toolMode !== "create") return;
+      if (toolMode === "create" && ghostShape.current && dragStart.current) {
+        const currentPos = getPointerPositionXZ(event);
+        const delta = currentPos.clone().sub(dragStart.current);
 
-      const currentPos = getPointerPositionInWorld(event);
-      const delta = currentPos.clone().sub(dragStart.current);
+        const sx = Math.max(0.1, Math.abs(delta.x));
+        const sz = Math.max(0.1, Math.abs(delta.z));
 
-      if (selectedShapeType === "sphere") {
-        const uniform = Math.max(
-          Math.abs(delta.x),
-          Math.abs(delta.y),
-          Math.abs(delta.z),
-          0.1
-        );
-        ghostShape.current.scale.set(uniform, uniform, uniform);
-      } else if (selectedShapeType === "cylinder") {
-        // XZ = radius, Y = height
-        const sx = Math.max(Math.abs(delta.x), 0.1);
-        const sz = Math.max(Math.abs(delta.z), 0.1);
-        const sy = Math.max(Math.abs(delta.y), 0.1);
-        ghostShape.current.scale.set(sx, sy, sz);
-      } else {
-        // Box: freeform scale
-        const sx = Math.max(Math.abs(delta.x), 0.1);
-        const sy = Math.max(Math.abs(delta.y), 0.1);
-        const sz = Math.max(Math.abs(delta.z), 0.1);
-        ghostShape.current.scale.set(sx, sy, sz);
+        if (selectedShapeType === "sphere") {
+          const uniform = Math.max(sx, sz);
+          ghostShape.current.scale.set(uniform, uniform, uniform);
+        } else if (selectedShapeType === "cylinder") {
+          ghostShape.current.scale.set(sx, 1, sz); // height = 1 for now
+        } else {
+          ghostShape.current.scale.set(sx, 1, sz); // Box: base XZ
+        }
+
+        // Center on drag
+        const mid = dragStart.current
+          .clone()
+          .add(currentPos)
+          .multiplyScalar(0.5);
+        mid.y = 0.5; // fixed initial Y, can adjust later with transformControls
+        ghostShape.current.position.copy(mid);
       }
 
-      // Keep base at dragStart
-      const mid = dragStart.current.clone().add(currentPos).multiplyScalar(0.5);
-      ghostShape.current.position.copy(mid);
+      if (toolMode === "sketch") {
+        sketchManagerRef.current?.onPointerMove(
+          event,
+          rendererRef.current.domElement
+        );
+      }
     },
-    [toolMode, selectedShapeType]
+    [toolMode]
   );
 
   const handlePointerUp = useCallback(() => {
-    if (!sceneRef.current || !ghostShape.current) return;
+    if (!sceneRef.current) return;
 
-    if (toolMode === "create") {
+    if (toolMode === "create" && ghostShape.current) {
       const finalShape = createShapeFromGhost(
         ghostShape.current,
         selectedShapeType
@@ -341,6 +316,49 @@ const Canvas3D: React.FC = () => {
     shape.position.copy(ghost.position);
     shape.scale.copy(ghost.scale);
     return shape;
+  };
+
+  const getPointerPositionInWorld = (event: PointerEvent) => {
+    if (!rendererRef.current || !cameraRef.current) return new THREE.Vector3();
+
+    const rect = rendererRef.current.domElement.getBoundingClientRect();
+    const pointer = new THREE.Vector2(
+      ((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -((event.clientY - rect.top) / rect.height) * 2 + 1
+    );
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(pointer, cameraRef.current);
+
+    // Use camera-facing plane for 3D drag
+    const planeNormal = cameraRef.current.getWorldDirection(
+      new THREE.Vector3()
+    );
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(
+      planeNormal,
+      new THREE.Vector3(0, 0, 0)
+    );
+
+    const point = new THREE.Vector3();
+    raycaster.ray.intersectPlane(plane, point);
+    return point;
+  };
+  const getPointerPositionXZ = (event: PointerEvent) => {
+    if (!rendererRef.current || !cameraRef.current) return new THREE.Vector3();
+
+    const rect = rendererRef.current.domElement.getBoundingClientRect();
+    const pointer = new THREE.Vector2(
+      ((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -((event.clientY - rect.top) / rect.height) * 2 + 1
+    );
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(pointer, cameraRef.current);
+
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // XZ plane
+    const point = new THREE.Vector3();
+    raycaster.ray.intersectPlane(plane, point);
+    return point;
   };
 
   // --- Export / Import ---
