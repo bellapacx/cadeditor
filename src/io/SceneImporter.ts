@@ -84,14 +84,6 @@ export class SceneImporter {
         console.log("Added shape to scene:", objData.shapeType, shape);
       }
 
-      // Debug: list all selectable meshes
-      if (selectionManager) {
-        console.log(
-          "Selectable meshes after import:",
-          selectionManager["selectableMeshes"]
-        );
-      }
-
       console.log("✅ Scene imported successfully!");
     } catch (err) {
       console.error("❌ Failed to import scene:", err);

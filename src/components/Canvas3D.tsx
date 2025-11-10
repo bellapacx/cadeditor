@@ -37,16 +37,21 @@ const Canvas3D: React.FC = () => {
   const orbitControlsRef = useRef<OrbitControls | null>(null);
   const selectionModeRef = useRef<"shape" | "face" | "edge">("shape");
   const [selectionProperties, setSelectionProperties] = useState<any>(null);
+  const snapRef = useRef(snapToGrid);
+  snapRef.current = snapToGrid;
 
   // --- Initialize Scene ---
   useEffect(() => {
     if (!mountRef.current || rendererRef.current) return;
-    const mount = mountRef.current; // ✅ local copy for cleanup
 
+    const mount = mountRef.current; // capture current div for safe cleanup
+
+    // --- Scene ---
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0xf0f0f0);
     sceneRef.current = scene;
 
+    // --- Camera ---
     const camera = new THREE.PerspectiveCamera(
       75,
       mount.clientWidth / mount.clientHeight,
@@ -57,27 +62,29 @@ const Canvas3D: React.FC = () => {
     camera.lookAt(0, 0, 0);
     cameraRef.current = camera;
 
+    // --- Renderer ---
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(mount.clientWidth, mount.clientHeight);
     mount.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
+    // --- Lights & Grid ---
     scene.add(new THREE.GridHelper(10, 10));
     scene.add(new THREE.AmbientLight(0xffffff, 0.8));
     const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
     dirLight.position.set(5, 10, 7);
     scene.add(dirLight);
 
-    // Managers
+    // --- Managers ---
     const selectionManager = new SelectionManager(camera, scene);
     selectionManagerRef.current = selectionManager;
 
     const sketchManager = new SketchManager(camera, scene, selectionManager, {
-      snapToGrid,
+      snapToGrid: snapRef.current, // use ref to get latest value
     });
     sketchManagerRef.current = sketchManager;
 
-    // OrbitControls
+    // --- Controls ---
     const orbit = new OrbitControls(camera, renderer.domElement);
     orbit.mouseButtons = {
       LEFT: null,
@@ -86,7 +93,6 @@ const Canvas3D: React.FC = () => {
     };
     orbitControlsRef.current = orbit;
 
-    // TransformControls
     const transformControls = new TransformControls(
       camera,
       renderer.domElement
@@ -102,26 +108,35 @@ const Canvas3D: React.FC = () => {
       }
     });
 
-    // Animate
+    // --- Animate ---
     const animate = () => {
       requestAnimationFrame(animate);
       renderer.render(scene, camera);
     };
     animate();
 
-    // Resize
+    // --- Resize handler ---
     const handleResize = () => {
-      camera.aspect = mount.clientWidth / mount.clientHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(mount.clientWidth, mount.clientHeight);
+      if (!cameraRef.current || !rendererRef.current) return;
+      cameraRef.current.aspect = mount.clientWidth / mount.clientHeight;
+      cameraRef.current.updateProjectionMatrix();
+      rendererRef.current.setSize(mount.clientWidth, mount.clientHeight);
     };
     window.addEventListener("resize", handleResize);
 
+    // --- Cleanup ---
     return () => {
       window.removeEventListener("resize", handleResize);
-      mount.removeChild(renderer.domElement); // ✅ safe cleanup
+      if (
+        rendererRef.current &&
+        mount.contains(rendererRef.current.domElement)
+      ) {
+        mount.removeChild(rendererRef.current.domElement); // safe removal
+        rendererRef.current.dispose(); // free WebGL resources
+        rendererRef.current = null;
+      }
     };
-  }, [snapToGrid]);
+  }, []); // no dependency on snapToGrid, use a ref if you need it reactive
 
   // --- Keyboard controls ---
   useEffect(() => {
@@ -151,7 +166,35 @@ const Canvas3D: React.FC = () => {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  // --- Pointer handlers (stabilized) ---
+  // --- Pointer helpers ---
+  const getPointerPositionInWorld = (event: PointerEvent) => {
+    if (!rendererRef.current || !cameraRef.current || !dragStart.current)
+      return new THREE.Vector3();
+
+    const rect = rendererRef.current.domElement.getBoundingClientRect();
+    const pointer = new THREE.Vector2(
+      ((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -((event.clientY - rect.top) / rect.height) * 2 + 1
+    );
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(pointer, cameraRef.current);
+
+    // Plane perpendicular to camera through dragStart
+    const planeNormal = cameraRef.current.getWorldDirection(
+      new THREE.Vector3()
+    );
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(
+      planeNormal,
+      dragStart.current
+    );
+
+    const point = new THREE.Vector3();
+    raycaster.ray.intersectPlane(plane, point);
+    return point;
+  };
+
+  // --- Pointer handlers ---
   const handlePointerDown = useCallback(
     (event: PointerEvent) => {
       if (event.button !== 0 || !sceneRef.current || !rendererRef.current)
@@ -173,8 +216,13 @@ const Canvas3D: React.FC = () => {
 
         setSelectionProperties(selected || null);
 
-        if (selected) transformControlsRef.current?.attach(selected.object);
-        else transformControlsRef.current?.detach();
+        if (selected) {
+          const group = selected.object.parent || selected.object;
+          transformControlsRef.current?.attach(group);
+        } else {
+          transformControlsRef.current?.detach();
+        }
+
         return;
       }
 
@@ -202,37 +250,58 @@ const Canvas3D: React.FC = () => {
 
   const handlePointerMove = useCallback(
     (event: PointerEvent) => {
-      if (!rendererRef.current || !sceneRef.current) return;
+      if (!ghostShape.current || !dragStart.current || !sceneRef.current)
+        return;
 
-      if (toolMode === "create" && ghostShape.current && dragStart.current) {
-        const currentPos = getPointerPositionInWorld(event);
-        const delta = currentPos.clone().sub(dragStart.current);
-        ghostShape.current.scale.set(
-          Math.max(0.1, Math.abs(delta.x)),
-          1,
-          Math.max(0.1, Math.abs(delta.z))
+      if (toolMode !== "create") return;
+
+      const currentPos = getPointerPositionInWorld(event);
+      const delta = currentPos.clone().sub(dragStart.current);
+
+      if (selectedShapeType === "sphere") {
+        const uniform = Math.max(
+          Math.abs(delta.x),
+          Math.abs(delta.y),
+          Math.abs(delta.z),
+          0.1
         );
+        ghostShape.current.scale.set(uniform, uniform, uniform);
+        ghostShape.current.position.copy(
+          dragStart.current.clone().add(currentPos).multiplyScalar(0.5)
+        );
+      } else if (selectedShapeType === "cylinder") {
+        const sx = Math.max(Math.abs(delta.x), 0.1);
+        const sz = Math.max(Math.abs(delta.z), 0.1);
+        const sy = Math.max(delta.y, 0.1); // Y scale = drag Y
+        ghostShape.current.scale.set(sx, sy, sz);
+
+        // Keep base at dragStart
         ghostShape.current.position.set(
           dragStart.current.x + delta.x / 2,
-          0.5,
+          dragStart.current.y + sy / 2,
+          dragStart.current.z + delta.z / 2
+        );
+      } else {
+        // Box: freeform
+        const sx = Math.max(Math.abs(delta.x), 0.1);
+        const sy = Math.max(delta.y, 0.1);
+        const sz = Math.max(Math.abs(delta.z), 0.1);
+        ghostShape.current.scale.set(sx, sy, sz);
+
+        ghostShape.current.position.set(
+          dragStart.current.x + delta.x / 2,
+          dragStart.current.y + sy / 2,
           dragStart.current.z + delta.z / 2
         );
       }
-
-      if (toolMode === "sketch") {
-        sketchManagerRef.current?.onPointerMove(
-          event,
-          rendererRef.current.domElement
-        );
-      }
     },
-    [toolMode]
+    [toolMode, selectedShapeType]
   );
 
   const handlePointerUp = useCallback(() => {
-    if (!sceneRef.current) return;
+    if (!sceneRef.current || !ghostShape.current) return;
 
-    if (toolMode === "create" && ghostShape.current) {
+    if (toolMode === "create") {
       const finalShape = createShapeFromGhost(
         ghostShape.current,
         selectedShapeType
@@ -290,35 +359,13 @@ const Canvas3D: React.FC = () => {
         : type === "cylinder"
         ? createCylinder()
         : createBox();
-
     shape.position.copy(ghost.position);
+    shape.scale.copy(ghost.scale);
 
-    const mesh = shape.userData.mesh as THREE.Mesh;
-
-    if (type === "sphere" || type === "cylinder") {
-      // Apply non-uniform scale to mesh
-      mesh.scale.copy(ghost.scale);
-    } else {
-      // Boxes scale the group
-      shape.scale.copy(ghost.scale);
-    }
+    // Save reference to group for transform controls
+    shape.userData.group = shape;
 
     return shape;
-  };
-
-  const getPointerPositionInWorld = (event: PointerEvent) => {
-    if (!rendererRef.current || !cameraRef.current) return new THREE.Vector3();
-    const rect = rendererRef.current.domElement.getBoundingClientRect();
-    const pointer = new THREE.Vector2(
-      ((event.clientX - rect.left) / rect.width) * 2 - 1,
-      -((event.clientY - rect.top) / rect.height) * 2 + 1
-    );
-    const raycaster = new THREE.Raycaster();
-    raycaster.setFromCamera(pointer, cameraRef.current);
-    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-    const point = new THREE.Vector3();
-    raycaster.ray.intersectPlane(plane, point);
-    return point;
   };
 
   // --- Export / Import ---
